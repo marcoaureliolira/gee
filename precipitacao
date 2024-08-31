@@ -1,0 +1,99 @@
+/Algoritmo desenvolvido como exigência parcial para obtenção do diploma 
+//do Curso de Tecnologia em Geoprocessamento do Instituto Federal de Educação, Ciência e Tecnologia do Piauí, 
+//Campus Teresina  Central .
+// Discente: Marco Aurélio da Silva Lira Filho
+//Orientador: Prof. Me. Antônio Celso.
+
+//(PARTE 01 - ALGORITMO PARA OBTENÇÃO DO DADO RASTER REFERENTE À PRECIPITAÇÃO ACUMULADA EM (mm)
+
+//1º - Atribuir a área de análise
+var area = ee.FeatureCollection('projects/ee-marcoliracgeo/assets/BACIA_POTY')
+var vazia = ee.Image().byte(); // Aplicar estilo de hachura vazia
+var contorno = vazia.paint({
+  featureCollection: area,
+  color: 1,
+  width: 2
+});
+
+Map.addLayer(contorno, {palette: '#000000'}, 'BHRP'); // Adicionar no ambiente de visualização
+Map.centerObject(area, 7)
+
+//2° - Seleção da coleção de dados CHIRPS
+var chirps = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+                              .filterDate('2015-01-01','2016-01-01') // Intervalo de 365 dias
+                              .select('precipitation')
+                              .filterBounds(area)
+
+print('Quantidade de imagens obtidas no ano referência:',chirps.size())
+
+//3° Aplicação de redutores estatistíco de soma na coleção de dados
+var precipitacao_sum = chirps.sum().clip(area)//Corta a imagem pela geometria da da área de análise
+
+//4° Plota no ambinete do MAP a imagem com a distribuição da precipitação anual.
+Map.addLayer(precipitacao_sum,{palette:['white','red','yellow','green','blue'],min:300, max:1500},'Precipitação Anual (mm)')
+
+// 5° Exportar imagens raster da precipitação acumulada (mm)
+Export.image.toDrive({image: precipitacao_sum, 
+description: 'Precipitacao_acumulada_mm', //nome da camada raster
+folder: 'GEE', // Pasta aonde o arquivo será salvo
+scale: 5000, // Escala aproximada das imagens
+region: area})// Exporta a imagem pela geometria da area
+
+//(PARTE 02 - ALGORITMO PARA OBTENÇÃO DO GRÁFICO DA PRECIPITAÇÃO ACUMULADA EM (mm)
+
+// 1º Definir o intervalo de tempo da série histórica
+var ano_inicial = 2000;
+var ano_final = 2023;
+
+//2º Criar uma lista sequencial para os anos
+var anos = ee.List.sequence(ano_inicial,ano_final);
+
+//3º Definir a data inicial e final 
+var data_inicial = ee.Date.fromYMD(ano_inicial,1,1);
+var data_final = ee.Date.fromYMD(ano_final,12,31);
+
+//4° Seleção da coleção de dados CHIRPS
+var chirps2 = ee.ImageCollection("UCSB-CHG/CHIRPS/DAILY")
+                                .select('precipitation')
+                                .filterDate(data_inicial, data_final)
+                                .filterBounds(area);
+print('Quantidade de imagens obtidas na serie temporal:',chirps2.size())
+
+// 5º Cálculo da precipitação anual acumulada na série histórica
+var precipitacao_anual_acum = ee.ImageCollection.fromImages(//Retorna a coleção de imagens contendo as imagens obtidas.
+    anos.map(function (year) {
+    
+    var anual = chirps2.filter(ee.Filter.calendarRange(year, year, 'year'))
+        .sum() // acumula os dados anuais 
+        .clip(area); //recorte para área de estudo
+    return anual
+        .set('year', year)
+        .set('system:time_start', ee.Date.fromYMD(year, 1, 1))//cria as datas na lista de sequência de datas
+        ;
+}));
+
+// 6º Construção Do Gráfico de Barras com as médias de Precipitação Acumulada na Série Histórica
+var grafico = ui.Chart.image.seriesByRegion({
+    imageCollection: precipitacao_anual_acum, //coleção de dados da precipitação anual acumulada
+    regions: area,  //geometria da área de análise
+    reducer: ee.Reducer.mean(), //Redutor de média para obter os valores de precipitação média anual
+    band: 'precipitation', //Banda de precipitação da imagem CHIRPS
+    scale: 5000, //Escala do gráfico
+    xProperty: 'system:time_start',  //propriedade ex: index, date ou system:time_start
+    seriesProperty: 'Nome'}) //Propriedade da Feature (Label, Nome, NOME, classe...etc)
+    .setOptions({ //opções para o gráfico
+      title: 'Precipitação acumulada anual na BHRP', //Título do gráfico
+      hAxis: {title: 'Intervalo de tempo'}, //nome da classe do eixo horizontal
+      vAxis: {title: 'P (mm)'}, //nome da classe do eixo vertical
+      lineWidth: 1, //largura da linha
+      pointSize: 5, //tamanho do ponto
+      series: {
+        0:  {color: 'DeepSkyBlue'},//Cor 1
+        1: {color: 'blue'},//Cor 2 
+        2: {color: 'SteelBlue'},// Cor 3
+        3: {color: 'Green'} // Cor 4
+          }}
+      )
+    .setChartType('ColumnChart');  //Define o Estilo do Gráfico
+
+print(grafico) //plota o gráfico em tela.
